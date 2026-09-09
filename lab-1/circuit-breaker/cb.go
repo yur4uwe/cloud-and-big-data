@@ -97,14 +97,11 @@ func (cb *CircuitBreaker) Execute(ctx context.Context, fn func(ctx context.Conte
 		cb.mu.Lock()
 		defer cb.mu.Unlock()
 
-		if isFailure(err) {
-			cb.failureCount++
-			if cb.failureCount >= cb.config.FailureThreshold {
-				cb.state = StateOpen
-				cb.openStateEntry = time.Now()
-				cb.failureCount = 0
-			}
-		} else {
+		if !isFailure(err) {
+			cb.failureCount = 0
+		} else if cb.failureCount++; cb.failureCount >= cb.config.FailureThreshold {
+			cb.state = StateOpen
+			cb.openStateEntry = time.Now()
 			cb.failureCount = 0
 		}
 
@@ -130,27 +127,34 @@ func (cb *CircuitBreaker) Execute(ctx context.Context, fn func(ctx context.Conte
 			cb.openStateEntry = time.Now()
 			cb.failureCount = 0
 			cb.halfOpenSuccessCount = 0
-		} else {
-			// Probe succeeded: increment success counter
-			cb.halfOpenSuccessCount++
-			if cb.halfOpenSuccessCount >= cb.config.HalfOpenMaxCalls {
-				cb.state = StateClosed
-				cb.failureCount = 0
-				cb.halfOpenSuccessCount = 0
-			}
+		} else if cb.halfOpenSuccessCount++; cb.halfOpenSuccessCount >= cb.config.HalfOpenMaxCalls {
+			// Required successful probes completed: heal to Closed
+			cb.state = StateClosed
+			cb.failureCount = 0
+			cb.halfOpenSuccessCount = 0
 		}
 	}
 
 	return err
 }
 
-// Call is a generic wrapper to execute a typed function through the CircuitBreaker.
+type callResult[T any] struct {
+	val T
+	err error
+}
+
+// Call is a generic wrapper to execute a typed function through the CircuitBreaker safely.
 func Call[T any](ctx context.Context, cb *CircuitBreaker, fn func(ctx context.Context) (T, error)) (T, error) {
-	var result T
+	ch := make(chan callResult[T], 1)
 	err := cb.Execute(ctx, func(callCtx context.Context) error {
-		var err error
-		result, err = fn(callCtx)
+		val, err := fn(callCtx)
+		ch <- callResult[T]{val: val, err: err}
 		return err
 	})
-	return result, err
+	if err != nil {
+		var zero T
+		return zero, err
+	}
+	res := <-ch
+	return res.val, res.err
 }
