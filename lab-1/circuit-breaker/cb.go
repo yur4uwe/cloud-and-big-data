@@ -41,6 +41,12 @@ func NewCircuitBreaker(config CircuitBreakerConfig) *CircuitBreaker {
 func (cb *CircuitBreaker) State() CBState {
 	cb.mu.Lock()
 	defer cb.mu.Unlock()
+	if cb.state == StateOpen && time.Since(cb.openStateEntry) >= cb.config.OpenStateDuration {
+		cb.state = StateHalfOpen
+		cb.failureCount = 0
+		cb.halfOpenSuccessCount = 0
+		cb.halfOpenInFlight = false
+	}
 	return cb.state
 }
 

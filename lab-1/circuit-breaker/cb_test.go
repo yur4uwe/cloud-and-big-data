@@ -20,29 +20,27 @@ func newTestConfig() circuitbreaker.CircuitBreakerConfig {
 	}
 }
 
-// 1. Test transition to Open after N consecutive failures
 func TestCircuitBreaker_TripToOpenOnConsecutiveFailures(t *testing.T) {
 	cb := circuitbreaker.NewCircuitBreaker(newTestConfig())
 	mock := services.NewMockService()
-	mock.SetMode(services.ModeFail)
 	ctx := context.Background()
 
-	// First 2 failures: breaker stays Closed
-	for i := 1; i <= 2; i++ {
-		_, err := circuitbreaker.Call(ctx, cb, mock.Call)
+	failCall := mock.FailWith(services.ErrInternal)
+
+	for i := range 2 {
+		_, err := circuitbreaker.Call(ctx, cb, failCall)
 		if !errors.Is(err, services.ErrInternal) {
 			t.Fatalf("expected ErrInternal, got: %v", err)
 		}
 		if cb.State() != circuitbreaker.StateClosed {
-			t.Fatalf("expected state Closed on failure %d, got: %v", i, cb.State())
+			t.Fatalf("expected state Closed on failure %d, got: %v", i+1, cb.State())
 		}
-		if cb.FailureCount() != i {
-			t.Fatalf("expected failureCount %d, got: %d", i, cb.FailureCount())
+		if cb.FailureCount() != i+1 {
+			t.Fatalf("expected failureCount %d, got: %d", i+1, cb.FailureCount())
 		}
 	}
 
-	// 3rd failure: trips to Open
-	_, err := circuitbreaker.Call(ctx, cb, mock.Call)
+	_, err := circuitbreaker.Call(ctx, cb, failCall)
 	if !errors.Is(err, services.ErrInternal) {
 		t.Fatalf("expected ErrInternal, got: %v", err)
 	}
@@ -51,19 +49,19 @@ func TestCircuitBreaker_TripToOpenOnConsecutiveFailures(t *testing.T) {
 	}
 }
 
-// 2. Test transition to Open after consecutive timeouts
 func TestCircuitBreaker_TripToOpenOnTimeouts(t *testing.T) {
 	cfg := newTestConfig()
 	cfg.TimeoutPerCall = 20 * time.Millisecond
 	cb := circuitbreaker.NewCircuitBreaker(cfg)
 	mock := services.NewMockService()
-	mock.SetHangDuration(100 * time.Millisecond)
 	ctx := context.Background()
 
-	for i := 1; i <= 3; i++ {
-		_, err := circuitbreaker.Call(ctx, cb, mock.Call)
+	hangCall := mock.HangFor(100 * time.Millisecond)
+
+	for i := range 3 {
+		_, err := circuitbreaker.Call(ctx, cb, hangCall)
 		if !errors.Is(err, circuitbreaker.ErrTimeout) {
-			t.Fatalf("call %d: expected ErrTimeout, got: %v", i, err)
+			t.Fatalf("call %d: expected ErrTimeout, got: %v", i+1, err)
 		}
 	}
 
@@ -72,16 +70,15 @@ func TestCircuitBreaker_TripToOpenOnTimeouts(t *testing.T) {
 	}
 }
 
-// 3. Test fast rejection in Open state without touching downstream service
 func TestCircuitBreaker_FastRejectionInOpenState(t *testing.T) {
 	cb := circuitbreaker.NewCircuitBreaker(newTestConfig())
 	mock := services.NewMockService()
-	mock.SetMode(services.ModeFail)
 	ctx := context.Background()
 
-	// Trip to Open
-	for i := 0; i < 3; i++ {
-		circuitbreaker.Call(ctx, cb, mock.Call)
+	failCall := mock.FailWith(services.ErrInternal)
+
+	for range 3 {
+		circuitbreaker.Call(ctx, cb, failCall)
 	}
 	if cb.State() != circuitbreaker.StateOpen {
 		t.Fatalf("expected state Open, got: %v", cb.State())
@@ -89,42 +86,35 @@ func TestCircuitBreaker_FastRejectionInOpenState(t *testing.T) {
 
 	callCountBefore := mock.CallCount()
 
-	// Next call in Open state must be fast-rejected with ErrCircuitOpen
-	_, err := circuitbreaker.Call(ctx, cb, mock.Call)
+	_, err := circuitbreaker.Call(ctx, cb, failCall)
 	if !errors.Is(err, circuitbreaker.ErrCircuitOpen) {
 		t.Fatalf("expected ErrCircuitOpen, got: %v", err)
 	}
 
-	// Mock call count must NOT increase
 	if mock.CallCount() != callCountBefore {
 		t.Fatalf("expected mock not to be called in Open state, before=%d, after=%d", callCountBefore, mock.CallCount())
 	}
 }
 
-// 4. Test HalfOpen recovery to Closed after HalfOpenMaxCalls successes
 func TestCircuitBreaker_HalfOpenRecoveryToClosed(t *testing.T) {
 	cfg := newTestConfig()
 	cfg.OpenStateDuration = 50 * time.Millisecond
 	cfg.HalfOpenMaxCalls = 2
 	cb := circuitbreaker.NewCircuitBreaker(cfg)
 	mock := services.NewMockService()
-	mock.SetMode(services.ModeFail)
 	ctx := context.Background()
 
-	// Trip to Open
-	for i := 0; i < 3; i++ {
-		circuitbreaker.Call(ctx, cb, mock.Call)
+	failCall := mock.FailWith(services.ErrInternal)
+
+	for range 3 {
+		circuitbreaker.Call(ctx, cb, failCall)
 	}
 
 	// Wait for cooldown to elapse
 	time.Sleep(60 * time.Millisecond)
 
-	// Now backend is healthy again
-	mock.SetMode(services.ModeSuccess)
-
-	// Probe 1: transitions to HalfOpen and succeeds
-	res1, err := circuitbreaker.Call(ctx, cb, mock.Call)
-	if err != nil || res1 != "ok" {
+	res, err := circuitbreaker.Call(ctx, cb, mock.SuccessCall)
+	if err != nil || res != "ok" {
 		t.Fatalf("probe 1 failed: %v", err)
 	}
 	if cb.State() != circuitbreaker.StateHalfOpen {
@@ -134,8 +124,7 @@ func TestCircuitBreaker_HalfOpenRecoveryToClosed(t *testing.T) {
 		t.Fatalf("expected 1 half-open success, got: %d", cb.HalfOpenSuccessCount())
 	}
 
-	// Probe 2: reaches HalfOpenMaxCalls (2) -> heals to Closed
-	res2, err := circuitbreaker.Call(ctx, cb, mock.Call)
+	res2, err := circuitbreaker.Call(ctx, cb, mock.SuccessCall)
 	if err != nil || res2 != "ok" {
 		t.Fatalf("probe 2 failed: %v", err)
 	}
@@ -144,55 +133,55 @@ func TestCircuitBreaker_HalfOpenRecoveryToClosed(t *testing.T) {
 	}
 }
 
-// 5. Test HalfOpen relapse to Open on probe failure
 func TestCircuitBreaker_HalfOpenRelapseOnFailure(t *testing.T) {
 	cfg := newTestConfig()
 	cfg.OpenStateDuration = 50 * time.Millisecond
 	cb := circuitbreaker.NewCircuitBreaker(cfg)
 	mock := services.NewMockService()
-	mock.SetMode(services.ModeFail)
 	ctx := context.Background()
 
-	// Trip to Open
-	for i := 0; i < 3; i++ {
-		circuitbreaker.Call(ctx, cb, mock.Call)
+	failCall := mock.FailWith(services.ErrInternal)
+
+	for range 3 {
+		circuitbreaker.Call(ctx, cb, failCall)
 	}
 
 	// Wait for cooldown
 	time.Sleep(60 * time.Millisecond)
 
-	// Probe call fails
-	_, err := circuitbreaker.Call(ctx, cb, mock.Call)
+	if cb.State() != circuitbreaker.StateHalfOpen {
+		t.Fatalf("expected state HalfOpen after timeout, got: %v", cb.State())
+	}
+
+	_, err := circuitbreaker.Call(ctx, cb, failCall)
 	if !errors.Is(err, services.ErrInternal) {
 		t.Fatalf("expected ErrInternal on probe failure, got: %v", err)
 	}
 
-	// Must immediately trip back to Open
 	if cb.State() != circuitbreaker.StateOpen {
 		t.Fatalf("expected state Open after probe failure, got: %v", cb.State())
 	}
 }
 
-// 6. Test HalfOpen rejects concurrent probe calls with ErrTooManyCalls
 func TestCircuitBreaker_HalfOpenRejectsExcessProbes(t *testing.T) {
 	cfg := newTestConfig()
 	cfg.OpenStateDuration = 50 * time.Millisecond
 	cfg.TimeoutPerCall = 100 * time.Millisecond
 	cb := circuitbreaker.NewCircuitBreaker(cfg)
 	mock := services.NewMockService()
-	mock.SetMode(services.ModeFail)
 	ctx := context.Background()
 
+	failCall := mock.FailWith(services.ErrInternal)
+
 	// Trip to Open
-	for i := 0; i < 3; i++ {
-		circuitbreaker.Call(ctx, cb, mock.Call)
+	for range 3 {
+		circuitbreaker.Call(ctx, cb, failCall)
 	}
 
 	// Wait for cooldown
 	time.Sleep(60 * time.Millisecond)
 
-	// Configure mock to hang during probe
-	mock.SetHangDuration(80 * time.Millisecond)
+	hangCall := mock.HangFor(80 * time.Millisecond)
 
 	var wg sync.WaitGroup
 	var err1, err2 error
@@ -201,7 +190,7 @@ func TestCircuitBreaker_HalfOpenRejectsExcessProbes(t *testing.T) {
 	// Probe 1 starts
 	go func() {
 		defer wg.Done()
-		_, err1 = circuitbreaker.Call(ctx, cb, mock.Call)
+		_, err1 = circuitbreaker.Call(ctx, cb, hangCall)
 	}()
 
 	// Small pause to guarantee Probe 1 acquired the in-flight slot
@@ -210,13 +199,12 @@ func TestCircuitBreaker_HalfOpenRejectsExcessProbes(t *testing.T) {
 	// Probe 2 attempts while Probe 1 is still in flight
 	go func() {
 		defer wg.Done()
-		_, err2 = circuitbreaker.Call(ctx, cb, mock.Call)
+		_, err2 = circuitbreaker.Call(ctx, cb, failCall)
 	}()
 
 	wg.Wait()
 	_ = err1
 
-	// Probe 2 must be rejected with ErrTooManyCalls
 	if !errors.Is(err2, circuitbreaker.ErrTooManyCalls) {
 		t.Fatalf("expected second concurrent probe to receive ErrTooManyCalls, got: %v", err2)
 	}
@@ -226,12 +214,12 @@ func TestCircuitBreaker_HalfOpenRejectsExcessProbes(t *testing.T) {
 func TestCircuitBreaker_NonTrippingErrorsIgnored(t *testing.T) {
 	cb := circuitbreaker.NewCircuitBreaker(newTestConfig())
 	mock := services.NewMockService()
-	mock.SetError(services.ErrBadPayload)
 	ctx := context.Background()
 
-	// Make 5 calls returning ErrBadPayload
-	for i := 0; i < 5; i++ {
-		_, err := circuitbreaker.Call(ctx, cb, mock.Call)
+	badPayloadCall := mock.FailWith(services.ErrBadPayload)
+
+	for range 5 {
+		_, err := circuitbreaker.Call(ctx, cb, badPayloadCall)
 		if !errors.Is(err, services.ErrBadPayload) {
 			t.Fatalf("expected ErrBadPayload, got: %v", err)
 		}
@@ -246,26 +234,28 @@ func TestCircuitBreaker_NonTrippingErrorsIgnored(t *testing.T) {
 	}
 }
 
-// 8. Test thread safety under high concurrency
 func TestCircuitBreaker_ConcurrentSafety(t *testing.T) {
 	cb := circuitbreaker.NewCircuitBreaker(newTestConfig())
 	mock := services.NewMockService()
 	ctx := context.Background()
 
+	failCall := mock.FailWith(services.ErrInternal)
+
 	const workers = 50
 	var wg sync.WaitGroup
 	wg.Add(workers)
 
-	for i := 0; i < workers; i++ {
+	for i := range workers {
 		go func(id int) {
 			defer wg.Done()
-			for j := 0; j < 20; j++ {
+			for range 20 {
+				var toCall func(context.Context) (services.Payload, error)
 				if id%5 == 0 {
-					mock.SetMode(services.ModeFail)
+					toCall = failCall
 				} else {
-					mock.SetMode(services.ModeSuccess)
+					toCall = mock.SuccessCall
 				}
-				circuitbreaker.Call(ctx, cb, mock.Call)
+				circuitbreaker.Call(ctx, cb, toCall)
 			}
 		}(i)
 	}

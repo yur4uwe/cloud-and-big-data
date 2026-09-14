@@ -23,9 +23,7 @@ func stateName(s circuitbreaker.CBState) string {
 }
 
 func main() {
-	fmt.Println("=========================================================")
-	fmt.Println("       CIRCUIT BREAKER DEMONSTRATION (Lab 1.1)           ")
-	fmt.Println("=========================================================")
+	fmt.Println("CIRCUIT BREAKER DEMO")
 
 	cfg := circuitbreaker.CircuitBreakerConfig{
 		FailureThreshold:  3,
@@ -37,50 +35,40 @@ func main() {
 	mock := services.NewMockService()
 	ctx := context.Background()
 
-	callService := func(stepName string) {
-		res, err := circuitbreaker.Call(ctx, cb, mock.Call)
+	callService := func(stepName string, callback func(context.Context) (services.Payload, error)) {
+		res, err := circuitbreaker.Call(ctx, cb, callback)
 		if err != nil {
-			fmt.Printf("[%-18s] Call Result: ❌ ERROR: %-28v | State: %s\n", stepName, err, stateName(cb.State()))
+			fmt.Printf("[%-18s] Call Result: ERROR: %-28v | State: %s\n", stepName, err, stateName(cb.State()))
 		} else {
-			fmt.Printf("[%-18s] Call Result: ✅ SUCCESS: %-26s | State: %s\n", stepName, res, stateName(cb.State()))
+			fmt.Printf("[%-18s] Call Result: SUCCESS: %-26s | State: %s\n", stepName, res, stateName(cb.State()))
 		}
 	}
 
 	// 1. Normal Healthy Operation
 	fmt.Println("\n--- Stage 1: Healthy Calls (Closed State) ---")
-	mock.SetMode(services.ModeSuccess)
-	callService("Normal Call 1")
-	callService("Normal Call 2")
+	callService("Normal Call 1", mock.SuccessCall)
+	callService("Normal Call 2", mock.SuccessCall)
 
-	// 2. Service Outage & Failures
 	fmt.Println("\n--- Stage 2: Service Outage (Reaching FailureThreshold = 3) ---")
-	mock.SetMode(services.ModeFail)
-	callService("Failing Call 1")
-	callService("Failing Call 2")
-	callService("Failing Call 3")
+	callback := mock.FailWith(services.ErrInternal)
+	callService("Failing Call 1", callback)
+	callService("Failing Call 2", callback)
+	callService("Failing Call 3", callback)
 
-	// 3. Fast Failures in Open State
 	fmt.Println("\n--- Stage 3: Fast-Fail in Open State (Zero traffic to backend) ---")
-	callService("Fast-Fail Call 1")
-	callService("Fast-Fail Call 2")
+	callback = mock.SuccessCall
+	callService("Fast-Fail Call 1", callback)
+	callService("Fast-Fail Call 2", callback)
 
-	// 4. Cooldown Wait
 	fmt.Printf("\n--- Stage 4: Cooldown period (%v) ---\n", cfg.OpenStateDuration)
 	fmt.Println("Waiting for backend recovery...")
 	time.Sleep(cfg.OpenStateDuration + 100*time.Millisecond)
-	mock.SetMode(services.ModeSuccess) // Backend is now recovered
 
-	// 5. Half-Open Trial Probes
 	fmt.Println("\n--- Stage 5: Half-Open Probes (HalfOpenMaxCalls = 2) ---")
-	callService("Probe Call 1")
-	callService("Probe Call 2")
+	callService("Probe Call 1", callback)
+	callService("Probe Call 2", callback)
 
-	// 6. Resumed Normal Operation
 	fmt.Println("\n--- Stage 6: Fully Restored (Closed State) ---")
-	callService("Restored Call 1")
-	callService("Restored Call 2")
-
-	fmt.Println("\n=========================================================")
-	fmt.Println("       DEMONSTRATION COMPLETED SUCCESSFULLY              ")
-	fmt.Println("=========================================================")
+	callService("Restored Call 1", callback)
+	callService("Restored Call 2", callback)
 }
