@@ -40,8 +40,7 @@ func debounce(fn func(), delay time.Duration, opts ...DebounceOpts) *DebouncedFu
 // Call schedules the debounced function to be called after the delay
 func (d *DebouncedFunc) Call() {
 	d.mu.Lock()
-	isFirst := d.timer == nil
-	shouldCallLeading := isFirst && d.leading
+	shouldCallLeading := d.timer == nil && d.leading
 
 	if !shouldCallLeading {
 		d.trailingCall = true
