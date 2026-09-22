@@ -14,77 +14,67 @@ type DebounceOpts struct {
 	Trailing bool
 }
 
-type DebouncedFunc struct {
-	mu           sync.Mutex
-	timer        *time.Timer
-	fn           func()
-	delay        time.Duration
-	leading      bool
-	trailing     bool
-	trailingCall bool
-}
-
-func debounce(fn func(), delay time.Duration, opts ...DebounceOpts) *DebouncedFunc {
+func debounce(fn func(), delay time.Duration, opts ...DebounceOpts) (debounced func(), dispose func()) {
 	opt := DebounceOpts{Trailing: true}
 	if len(opts) > 0 {
 		opt = opts[0]
 	}
-	return &DebouncedFunc{
-		fn:       fn,
-		delay:    delay,
-		leading:  opt.Leading,
-		trailing: opt.Trailing,
-	}
-}
 
-// Call schedules the debounced function to be called after the delay
-func (d *DebouncedFunc) Call() {
-	d.mu.Lock()
-	shouldCallLeading := d.timer == nil && d.leading
+	var (
+		mu           sync.Mutex
+		timer        *time.Timer
+		trailingCall bool
+	)
 
-	if !shouldCallLeading {
-		d.trailingCall = true
-	}
+	debounced = func() {
+		mu.Lock()
+		shouldCallLeading := timer == nil && opt.Leading
 
-	if d.timer != nil {
-		d.timer.Stop()
-	}
-
-	d.timer = time.AfterFunc(d.delay, func() {
-		d.mu.Lock()
-		shouldCallTrailing := d.trailing && d.trailingCall
-		d.timer = nil
-		d.trailingCall = false
-		d.mu.Unlock()
-
-		if shouldCallTrailing {
-			d.fn()
+		if !shouldCallLeading {
+			trailingCall = true
 		}
-	})
-	d.mu.Unlock()
 
-	if shouldCallLeading {
-		d.fn()
+		if timer != nil {
+			timer.Stop()
+		}
+
+		timer = time.AfterFunc(delay, func() {
+			mu.Lock()
+			shouldCallTrailing := opt.Trailing && trailingCall
+			timer = nil
+			trailingCall = false
+			mu.Unlock()
+
+			if shouldCallTrailing {
+				fn()
+			}
+		})
+		mu.Unlock()
+
+		if shouldCallLeading {
+			fn()
+		}
 	}
-}
 
-// Dispose cancels any scheduled execution and cleans up the timer
-func (d *DebouncedFunc) Dispose() {
-	d.mu.Lock()
-	defer d.mu.Unlock()
+	dispose = func() {
+		mu.Lock()
+		defer mu.Unlock()
 
-	if d.timer != nil {
-		d.timer.Stop()
-		d.timer = nil
+		if timer != nil {
+			timer.Stop()
+			timer = nil
+		}
+		trailingCall = false
 	}
-	d.trailingCall = false
+
+	return debounced, dispose
 }
 
 func main() {
-	debouncer := debounce(func() {
+	debounced, dispose := debounce(func() {
 		fmt.Println("hello")
 	}, time.Second)
-	defer debouncer.Dispose()
+	defer dispose()
 
 	s := bufio.NewReader(os.Stdin)
 	for {
@@ -97,7 +87,7 @@ func main() {
 		if strings.TrimSpace(s) == "exit" {
 			break
 		} else {
-			debouncer.Call()
+			debounced()
 		}
 	}
 

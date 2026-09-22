@@ -11,14 +11,14 @@ func TestDebounce_BurstOfCalls_ExecutesOnce(t *testing.T) {
 	var count atomic.Int32
 	delay := 50 * time.Millisecond
 
-	debounced := debounce(func() {
+	debounced, dispose := debounce(func() {
 		count.Add(1)
 	}, delay)
-	defer debounced.Dispose()
+	defer dispose()
 
 	// Rapid burst of 10 calls spaced by 5ms (total time 45ms < 50ms delay)
 	for range 10 {
-		debounced.Call()
+		debounced()
 		time.Sleep(5 * time.Millisecond)
 	}
 
@@ -39,20 +39,20 @@ func TestDebounce_LeadingOnly_ImmediateFirstAndSuppressesUntilPause(t *testing.T
 	var count atomic.Int32
 	delay := 50 * time.Millisecond
 
-	debounced := debounce(func() {
+	debounced, dispose := debounce(func() {
 		count.Add(1)
 	}, delay, DebounceOpts{Leading: true, Trailing: false})
-	defer debounced.Dispose()
+	defer dispose()
 
 	// 1. First call should execute immediately
-	debounced.Call()
+	debounced()
 	if c := count.Load(); c != 1 {
 		t.Fatalf("expected count 1 immediately after first call, got: %d", c)
 	}
 
 	// 2. Rapid follow-up calls within delay must be suppressed
 	for range 5 {
-		debounced.Call()
+		debounced()
 		time.Sleep(5 * time.Millisecond)
 	}
 	if c := count.Load(); c != 1 {
@@ -66,7 +66,7 @@ func TestDebounce_LeadingOnly_ImmediateFirstAndSuppressesUntilPause(t *testing.T
 	}
 
 	// 4. Next call after pause should trigger leading execution immediately again
-	debounced.Call()
+	debounced()
 	if c := count.Load(); c != 2 {
 		t.Fatalf("expected count 2 on new call after pause, got: %d", c)
 	}
@@ -76,12 +76,12 @@ func TestDebounce_LeadingAndTrailing_SingleCall(t *testing.T) {
 	var count atomic.Int32
 	delay := 50 * time.Millisecond
 
-	debounced := debounce(func() {
+	debounced, dispose := debounce(func() {
 		count.Add(1)
 	}, delay, DebounceOpts{Leading: true, Trailing: true})
-	defer debounced.Dispose()
+	defer dispose()
 
-	debounced.Call()
+	debounced()
 	if c := count.Load(); c != 1 {
 		t.Fatalf("expected immediate leading call (count=1), got: %d", c)
 	}
@@ -99,13 +99,13 @@ func TestDebounce_LeadingAndTrailing_Burst(t *testing.T) {
 	var count atomic.Int32
 	delay := 50 * time.Millisecond
 
-	debounced := debounce(func() {
+	debounced, dispose := debounce(func() {
 		count.Add(1)
 	}, delay, DebounceOpts{Leading: true, Trailing: true})
-	defer debounced.Dispose()
+	defer dispose()
 
 	// First call fires leading immediately
-	debounced.Call()
+	debounced()
 	if c := count.Load(); c != 1 {
 		t.Fatalf("expected immediate leading call, got: %d", c)
 	}
@@ -113,7 +113,7 @@ func TestDebounce_LeadingAndTrailing_Burst(t *testing.T) {
 	// Subsequent calls during window
 	for range 4 {
 		time.Sleep(10 * time.Millisecond)
-		debounced.Call()
+		debounced()
 	}
 
 	// Still only leading call executed so far
@@ -135,13 +135,13 @@ func TestDebounce_NeitherLeadingNorTrailing(t *testing.T) {
 	var count atomic.Int32
 	delay := 50 * time.Millisecond
 
-	debounced := debounce(func() {
+	debounced, dispose := debounce(func() {
 		count.Add(1)
 	}, delay, DebounceOpts{Leading: false, Trailing: false})
-	defer debounced.Dispose()
+	defer dispose()
 
 	for range 5 {
-		debounced.Call()
+		debounced()
 		time.Sleep(5 * time.Millisecond)
 	}
 
@@ -156,15 +156,15 @@ func TestDebounce_Dispose_CancelsScheduledExecution(t *testing.T) {
 	var count atomic.Int32
 	delay := 50 * time.Millisecond
 
-	debounced := debounce(func() {
+	debounced, dispose := debounce(func() {
 		count.Add(1)
 	}, delay)
 
-	debounced.Call()
+	debounced()
 
 	// Dispose before delay expires
 	time.Sleep(10 * time.Millisecond)
-	debounced.Dispose()
+	dispose()
 
 	// Wait past the original delay
 	time.Sleep(delay + 20*time.Millisecond)
@@ -178,10 +178,10 @@ func TestDebounce_ConcurrentSafety(t *testing.T) {
 	var count atomic.Int32
 	delay := 30 * time.Millisecond
 
-	debounced := debounce(func() {
+	debounced, dispose := debounce(func() {
 		count.Add(1)
 	}, delay, DebounceOpts{Leading: true, Trailing: true})
-	defer debounced.Dispose()
+	defer dispose()
 
 	const goroutines = 20
 	var wg sync.WaitGroup
@@ -191,7 +191,7 @@ func TestDebounce_ConcurrentSafety(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for range 10 {
-				debounced.Call()
+				debounced()
 				time.Sleep(2 * time.Millisecond)
 			}
 		}()
