@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -15,20 +16,25 @@ var (
 )
 
 // withTimeout executes f asynchronously and returns a result channel and a cancel function.
-func withTimeout(f func() error, timeout time.Duration) (<-chan error, func()) {
+// Channels and timers are used for timeout orchestration, while context is passed to f
+// to allow canceling/preventing side effects when the timeout or cancel occurs.
+func withTimeout(f func(context.Context) error, timeout time.Duration) (<-chan error, func()) {
 	out := make(chan error, 1)
 	done := make(chan error, 1)
 	cancelCh := make(chan struct{})
 
+	ctx, cancelCtx := context.WithCancel(context.Background())
+
 	var once sync.Once
 	cancel := func() {
 		once.Do(func() {
+			cancelCtx()
 			close(cancelCh)
 		})
 	}
 
 	go func() {
-		done <- f()
+		done <- f(ctx)
 	}()
 
 	go func() {
@@ -41,6 +47,7 @@ func withTimeout(f func() error, timeout time.Duration) (<-chan error, func()) {
 		case <-cancelCh:
 			out <- ErrCanceled
 		case <-timer.C:
+			cancelCtx() // сповіщаємо fn про настання тайм-ауту через контекст
 			out <- ErrTimeout
 		}
 	}()
@@ -53,7 +60,7 @@ func main() {
 	fmt.Printf("Quick-time test: Press [Enter] before %v passes!\n> ", timeout)
 
 	start := time.Now()
-	resCh, cancel := withTimeout(func() error {
+	resCh, cancel := withTimeout(func(ctx context.Context) error {
 		reader := bufio.NewReader(os.Stdin)
 		_, err := reader.ReadString('\n')
 		return err

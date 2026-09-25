@@ -3,7 +3,7 @@ package services
 import (
 	"errors"
 
-	circuitbreaker "github.com/yur4uwe/cloud/lab-1/circuit-breaker"
+	circuitbreaker "github.com/yur4uwe/cloud/1-circuit-breaker/circuit-breaker"
 )
 
 var (

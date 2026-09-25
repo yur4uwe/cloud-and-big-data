@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	circuitbreaker "github.com/yur4uwe/cloud/lab-1/circuit-breaker"
-	"github.com/yur4uwe/cloud/lab-1/services"
+	circuitbreaker "github.com/yur4uwe/cloud/1-circuit-breaker/circuit-breaker"
+	"github.com/yur4uwe/cloud/1-circuit-breaker/services"
 )
 
 func newTestConfig() circuitbreaker.CircuitBreakerConfig {

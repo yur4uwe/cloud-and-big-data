@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"sync/atomic"
 	"testing"
@@ -11,10 +12,14 @@ import (
 func TestWithTimeout_SuccessBeforeTimeout(t *testing.T) {
 	var executed atomic.Bool
 
-	resCh, cancel := withTimeout(func() error {
-		time.Sleep(20 * time.Millisecond)
-		executed.Store(true)
-		return nil
+	resCh, cancel := withTimeout(func(ctx context.Context) error {
+		select {
+		case <-time.After(20 * time.Millisecond):
+			executed.Store(true)
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
 	}, 100*time.Millisecond)
 	defer cancel()
 
@@ -31,7 +36,7 @@ func TestWithTimeout_SuccessBeforeTimeout(t *testing.T) {
 func TestWithTimeout_ReturnsFnError(t *testing.T) {
 	errCustom := errors.New("business logic failure")
 
-	resCh, cancel := withTimeout(func() error {
+	resCh, cancel := withTimeout(func(ctx context.Context) error {
 		return errCustom
 	}, 100*time.Millisecond)
 	defer cancel()
@@ -47,10 +52,14 @@ func TestWithTimeout_TimeoutExceeded_SideEffectsPrevented(t *testing.T) {
 	var sideEffect atomic.Bool
 
 	start := time.Now()
-	resCh, cancel := withTimeout(func() error {
-		time.Sleep(150 * time.Millisecond)
-		sideEffect.Store(true)
-		return nil
+	resCh, cancel := withTimeout(func(ctx context.Context) error {
+		select {
+		case <-time.After(150 * time.Millisecond):
+			sideEffect.Store(true)
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
 	}, 40*time.Millisecond)
 	defer cancel()
 
@@ -72,9 +81,13 @@ func TestWithTimeout_TimeoutExceeded_SideEffectsPrevented(t *testing.T) {
 
 // 2b. Підтримка відміни — операція відміняється достроково викликом cancel()
 func TestWithTimeout_CancellationSupport(t *testing.T) {
-	resCh, cancel := withTimeout(func() error {
-		time.Sleep(500 * time.Millisecond)
-		return nil
+	resCh, cancel := withTimeout(func(ctx context.Context) error {
+		select {
+		case <-time.After(500 * time.Millisecond):
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
 	}, 500*time.Millisecond)
 
 	// Викликаємо функцію відміни через 25ms, хоча тайм-аут 500ms
@@ -101,8 +114,13 @@ func TestWithTimeout_CombinedWithRetry_GlobalTimeoutBoundsTotalTime(t *testing.T
 	globalTimeout := 120 * time.Millisecond
 
 	start := time.Now()
-	resCh, cancel := withTimeout(func() error {
+	resCh, cancel := withTimeout(func(ctx context.Context) error {
 		for i := 0; i < maxAttempts; i++ {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			default:
+			}
 			attempts.Add(1)
 			time.Sleep(step)
 		}
@@ -134,11 +152,15 @@ func TestWithTimeout_CombinedWithRetry_PerAttemptTimeout(t *testing.T) {
 			attempts.Add(1)
 			attemptNum := attempts.Load()
 
-			resCh, cancel := withTimeout(func() error {
+			resCh, cancel := withTimeout(func(ctx context.Context) error {
 				if attemptNum < 3 {
 					// Перші 2 спроби зависають довше за тайм-аут
-					time.Sleep(100 * time.Millisecond)
-					return nil
+					select {
+					case <-time.After(100 * time.Millisecond):
+						return nil
+					case <-ctx.Done():
+						return ctx.Err()
+					}
 				}
 				// 3-я спроба швидка та успішна
 				return nil
