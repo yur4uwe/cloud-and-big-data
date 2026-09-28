@@ -1,4 +1,4 @@
-package main
+package timeout
 
 import (
 	"context"
@@ -6,13 +6,14 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/yur4uwe/cloud/3-retry/retry"
 )
 
-// 1. Успішна операція до тайм-ауту
 func TestWithTimeout_SuccessBeforeTimeout(t *testing.T) {
 	var executed atomic.Bool
 
-	resCh, cancel := withTimeout(func(ctx context.Context) error {
+	resCh, cancel := WithTimeout(func(ctx context.Context) error {
 		select {
 		case <-time.After(20 * time.Millisecond):
 			executed.Store(true)
@@ -32,11 +33,10 @@ func TestWithTimeout_SuccessBeforeTimeout(t *testing.T) {
 	}
 }
 
-// 1b. Успішна операція з помилкою бізнес-логіки (не тайм-аут) повертає помилку fn
 func TestWithTimeout_ReturnsFnError(t *testing.T) {
 	errCustom := errors.New("business logic failure")
 
-	resCh, cancel := withTimeout(func(ctx context.Context) error {
+	resCh, cancel := WithTimeout(func(ctx context.Context) error {
 		return errCustom
 	}, 100*time.Millisecond)
 	defer cancel()
@@ -47,12 +47,11 @@ func TestWithTimeout_ReturnsFnError(t *testing.T) {
 	}
 }
 
-// 2. Перевищення — повертається помилка тайм-ауту, побічні ефекти не відбулися / відмінені
 func TestWithTimeout_TimeoutExceeded_SideEffectsPrevented(t *testing.T) {
 	var sideEffect atomic.Bool
 
 	start := time.Now()
-	resCh, cancel := withTimeout(func(ctx context.Context) error {
+	resCh, cancel := WithTimeout(func(ctx context.Context) error {
 		select {
 		case <-time.After(150 * time.Millisecond):
 			sideEffect.Store(true)
@@ -79,9 +78,8 @@ func TestWithTimeout_TimeoutExceeded_SideEffectsPrevented(t *testing.T) {
 	}
 }
 
-// 2b. Підтримка відміни — операція відміняється достроково викликом cancel()
 func TestWithTimeout_CancellationSupport(t *testing.T) {
-	resCh, cancel := withTimeout(func(ctx context.Context) error {
+	resCh, cancel := WithTimeout(func(ctx context.Context) error {
 		select {
 		case <-time.After(500 * time.Millisecond):
 			return nil
@@ -90,7 +88,6 @@ func TestWithTimeout_CancellationSupport(t *testing.T) {
 		}
 	}, 500*time.Millisecond)
 
-	// Викликаємо функцію відміни через 25ms, хоча тайм-аут 500ms
 	time.AfterFunc(25*time.Millisecond, cancel)
 
 	start := time.Now()
@@ -105,8 +102,6 @@ func TestWithTimeout_CancellationSupport(t *testing.T) {
 	}
 }
 
-// 3. Комбінування з Retry (не множити загальний час очікування безконтрольно)
-// Сценарій А: Загальний тайм-аут обмежує цикл повторів (Global Timeout wrapping Retry)
 func TestWithTimeout_CombinedWithRetry_GlobalTimeoutBoundsTotalTime(t *testing.T) {
 	var attempts atomic.Int32
 	maxAttempts := 10
@@ -114,17 +109,16 @@ func TestWithTimeout_CombinedWithRetry_GlobalTimeoutBoundsTotalTime(t *testing.T
 	globalTimeout := 120 * time.Millisecond
 
 	start := time.Now()
-	resCh, cancel := withTimeout(func(ctx context.Context) error {
-		for i := 0; i < maxAttempts; i++ {
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			default:
-			}
+	resCh, cancel := WithTimeout(func(ctx context.Context) error {
+		return retry.Execute(ctx, func(childCtx context.Context) error {
 			attempts.Add(1)
-			time.Sleep(step)
-		}
-		return errors.New("all attempts failed")
+			return errors.New("transient failure")
+		}, retry.RetryOptions{
+			MaxAttempts: maxAttempts,
+			Strategy:    retry.RetryConstant,
+			Step:        step,
+			Timeout:     globalTimeout,
+		})
 	}, globalTimeout)
 	defer cancel()
 
@@ -135,51 +129,44 @@ func TestWithTimeout_CombinedWithRetry_GlobalTimeoutBoundsTotalTime(t *testing.T
 		t.Fatalf("expected ErrTimeout, got: %v", err)
 	}
 
-	// 10 спроб по 50ms зайняли б 500ms. Загальний тайм-аут повертає управління через ~120ms
 	if elapsed > 250*time.Millisecond {
 		t.Fatalf("total wait time multiplied uncontrollably: %v (limit: %v)", elapsed, globalTimeout)
 	}
 }
 
-// Сценарій Б: Повтор окремих спроб, якщо кожна окрема перевищує per-attempt тайм-аут
 func TestWithTimeout_CombinedWithRetry_PerAttemptTimeout(t *testing.T) {
 	var attempts atomic.Int32
 	maxAttempts := 3
 	perAttemptTimeout := 30 * time.Millisecond
 
-	retryFn := func() error {
-		for i := 0; i < maxAttempts; i++ {
-			attempts.Add(1)
-			attemptNum := attempts.Load()
+	err := retry.Execute(context.Background(), func(ctx context.Context) error {
+		attempts.Add(1)
+		attemptNum := attempts.Load()
 
-			resCh, cancel := withTimeout(func(ctx context.Context) error {
-				if attemptNum < 3 {
-					// Перші 2 спроби зависають довше за тайм-аут
-					select {
-					case <-time.After(100 * time.Millisecond):
-						return nil
-					case <-ctx.Done():
-						return ctx.Err()
-					}
+		resCh, cancel := WithTimeout(func(innerCtx context.Context) error {
+			if attemptNum < 3 {
+				select {
+				case <-time.After(100 * time.Millisecond):
+					return nil
+				case <-innerCtx.Done():
+					return innerCtx.Err()
 				}
-				// 3-я спроба швидка та успішна
-				return nil
-			}, perAttemptTimeout)
-
-			err := <-resCh
-			cancel()
-
-			if err == nil {
-				return nil
 			}
-			if !errors.Is(err, ErrTimeout) {
-				return err
-			}
-		}
-		return errors.New("max attempts exceeded")
-	}
+			return nil
+		}, perAttemptTimeout)
+		defer cancel()
 
-	err := retryFn()
+		return <-resCh
+	}, retry.RetryOptions{
+		MaxAttempts: maxAttempts,
+		Strategy:    retry.RetryConstant,
+		RetryOn: func(err error) bool {
+			return errors.Is(err, ErrTimeout)
+		},
+		Step:    5 * time.Millisecond,
+		Timeout: 500 * time.Millisecond,
+	})
+
 	if err != nil {
 		t.Fatalf("expected eventual success after retrying timed-out attempts, got: %v", err)
 	}

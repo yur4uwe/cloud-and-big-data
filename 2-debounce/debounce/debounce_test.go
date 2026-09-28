@@ -1,4 +1,4 @@
-package main
+package debounce
 
 import (
 	"sync"
@@ -11,23 +11,20 @@ func TestDebounce_BurstOfCalls_ExecutesOnce(t *testing.T) {
 	var count atomic.Int32
 	delay := 50 * time.Millisecond
 
-	debounced, dispose := debounce(func() {
+	debounced, dispose := Debounce(func() {
 		count.Add(1)
 	}, delay)
 	defer dispose()
 
-	// Rapid burst of 10 calls spaced by 5ms (total time 45ms < 50ms delay)
 	for range 10 {
 		debounced()
 		time.Sleep(5 * time.Millisecond)
 	}
 
-	// At this point, delay hasn't expired since the last call, so count must be 0
 	if c := count.Load(); c != 0 {
 		t.Fatalf("expected count 0 before delay elapsed, got: %d", c)
 	}
 
-	// Wait for the trailing delay to elapse
 	time.Sleep(delay + 20*time.Millisecond)
 
 	if c := count.Load(); c != 1 {
@@ -39,18 +36,16 @@ func TestDebounce_LeadingOnly_ImmediateFirstAndSuppressesUntilPause(t *testing.T
 	var count atomic.Int32
 	delay := 50 * time.Millisecond
 
-	debounced, dispose := debounce(func() {
+	debounced, dispose := Debounce(func() {
 		count.Add(1)
 	}, delay, DebounceOpts{Leading: true, Trailing: false})
 	defer dispose()
 
-	// 1. First call should execute immediately
 	debounced()
 	if c := count.Load(); c != 1 {
 		t.Fatalf("expected count 1 immediately after first call, got: %d", c)
 	}
 
-	// 2. Rapid follow-up calls within delay must be suppressed
 	for range 5 {
 		debounced()
 		time.Sleep(5 * time.Millisecond)
@@ -59,13 +54,11 @@ func TestDebounce_LeadingOnly_ImmediateFirstAndSuppressesUntilPause(t *testing.T
 		t.Fatalf("expected count to remain 1 during rapid calls, got: %d", c)
 	}
 
-	// 3. Wait for the debounce delay window to pass
 	time.Sleep(delay + 20*time.Millisecond)
 	if c := count.Load(); c != 1 {
 		t.Fatalf("expected count still 1 after delay when trailing=false, got: %d", c)
 	}
 
-	// 4. Next call after pause should trigger leading execution immediately again
 	debounced()
 	if c := count.Load(); c != 2 {
 		t.Fatalf("expected count 2 on new call after pause, got: %d", c)
@@ -76,7 +69,7 @@ func TestDebounce_LeadingAndTrailing_SingleCall(t *testing.T) {
 	var count atomic.Int32
 	delay := 50 * time.Millisecond
 
-	debounced, dispose := debounce(func() {
+	debounced, dispose := Debounce(func() {
 		count.Add(1)
 	}, delay, DebounceOpts{Leading: true, Trailing: true})
 	defer dispose()
@@ -86,10 +79,8 @@ func TestDebounce_LeadingAndTrailing_SingleCall(t *testing.T) {
 		t.Fatalf("expected immediate leading call (count=1), got: %d", c)
 	}
 
-	// Wait for debounce delay
 	time.Sleep(delay + 20*time.Millisecond)
 
-	// Since there were no subsequent calls during the window, trailing should NOT fire again
 	if c := count.Load(); c != 1 {
 		t.Fatalf("expected count 1 (no duplicate trailing for single call), got: %d", c)
 	}
@@ -99,43 +90,37 @@ func TestDebounce_LeadingAndTrailing_Burst(t *testing.T) {
 	var count atomic.Int32
 	delay := 50 * time.Millisecond
 
-	debounced, dispose := debounce(func() {
+	debounced, dispose := Debounce(func() {
 		count.Add(1)
 	}, delay, DebounceOpts{Leading: true, Trailing: true})
 	defer dispose()
 
-	// First call fires leading immediately
 	debounced()
 	if c := count.Load(); c != 1 {
 		t.Fatalf("expected immediate leading call, got: %d", c)
 	}
 
-	// Subsequent calls during window
 	for range 4 {
 		time.Sleep(10 * time.Millisecond)
 		debounced()
 	}
 
-	// Still only leading call executed so far
 	if c := count.Load(); c != 1 {
 		t.Fatalf("expected count still 1 before trailing delay elapses, got: %d", c)
 	}
 
-	// Wait for trailing delay
 	time.Sleep(delay + 20*time.Millisecond)
 
-	// Should have executed exactly 2 times: 1 leading + 1 trailing
 	if c := count.Load(); c != 2 {
 		t.Fatalf("expected exactly 2 executions (1 leading + 1 trailing), got: %d", c)
 	}
 }
 
-// 3c. leading=false, trailing=false → never executes
 func TestDebounce_NeitherLeadingNorTrailing(t *testing.T) {
 	var count atomic.Int32
 	delay := 50 * time.Millisecond
 
-	debounced, dispose := debounce(func() {
+	debounced, dispose := Debounce(func() {
 		count.Add(1)
 	}, delay, DebounceOpts{Leading: false, Trailing: false})
 	defer dispose()
@@ -156,17 +141,15 @@ func TestDebounce_Dispose_CancelsScheduledExecution(t *testing.T) {
 	var count atomic.Int32
 	delay := 50 * time.Millisecond
 
-	debounced, dispose := debounce(func() {
+	debounced, dispose := Debounce(func() {
 		count.Add(1)
 	}, delay)
 
 	debounced()
 
-	// Dispose before delay expires
 	time.Sleep(10 * time.Millisecond)
 	dispose()
 
-	// Wait past the original delay
 	time.Sleep(delay + 20*time.Millisecond)
 
 	if c := count.Load(); c != 0 {
@@ -178,7 +161,7 @@ func TestDebounce_ConcurrentSafety(t *testing.T) {
 	var count atomic.Int32
 	delay := 30 * time.Millisecond
 
-	debounced, dispose := debounce(func() {
+	debounced, dispose := Debounce(func() {
 		count.Add(1)
 	}, delay, DebounceOpts{Leading: true, Trailing: true})
 	defer dispose()
