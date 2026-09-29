@@ -12,10 +12,7 @@ var (
 	ErrCanceled = errors.New("canceled")
 )
 
-// WithTimeout executes f asynchronously and returns a result channel and a cancel function.
-// Channels and timers are used for timeout orchestration, while context is passed to f
-// to allow canceling/preventing side effects when the timeout or cancel occurs.
-func WithTimeout(f func(context.Context) error, timeout time.Duration) (<-chan error, func()) {
+func WithTimeout(f func(context.Context) error, timeout time.Duration) (<-chan error, context.CancelFunc) {
 	out := make(chan error, 1)
 	done := make(chan error, 1)
 	cancelCh := make(chan struct{})
@@ -23,7 +20,7 @@ func WithTimeout(f func(context.Context) error, timeout time.Duration) (<-chan e
 	ctx, cancelCtx := context.WithCancel(context.Background())
 
 	var once sync.Once
-	cancel := func() {
+	cancelFunc := func() {
 		once.Do(func() {
 			cancelCtx()
 			close(cancelCh)
@@ -49,5 +46,5 @@ func WithTimeout(f func(context.Context) error, timeout time.Duration) (<-chan e
 		}
 	}()
 
-	return out, cancel
+	return out, cancelFunc
 }

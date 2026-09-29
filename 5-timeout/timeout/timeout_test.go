@@ -166,7 +166,6 @@ func TestWithTimeout_CombinedWithRetry_PerAttemptTimeout(t *testing.T) {
 		Step:    5 * time.Millisecond,
 		Timeout: 500 * time.Millisecond,
 	})
-
 	if err != nil {
 		t.Fatalf("expected eventual success after retrying timed-out attempts, got: %v", err)
 	}
