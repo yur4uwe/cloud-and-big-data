@@ -6,6 +6,7 @@ import (
 	"hash/crc32"
 	"math"
 	"slices"
+	"strings"
 )
 
 type StorageItem struct {
@@ -36,12 +37,13 @@ func NewStorage(shardCount int) (*Storage, error) {
 	}, nil
 }
 
-func hashKey(key string) uint32 {
+func HashKey(key string) uint32 {
 	return crc32.ChecksumIEEE([]byte(key))
 }
 
+// Get returns the value of a key in the storage.
 func (s *Storage) Get(key string) (int, bool) {
-	ringPos := hashKey(key)
+	ringPos := HashKey(key)
 	shardIndex, _ := slices.BinarySearch(s.Tokens, ringPos)
 	if shardIndex == len(s.Tokens) {
 		shardIndex = 0
@@ -54,11 +56,18 @@ func (s *Storage) Get(key string) (int, bool) {
 	return -1, false
 }
 
+// Put inserts or updates a key in the storage.
 func (s *Storage) Put(key string, value int) {
-	ringPos := hashKey(key)
+	ringPos := HashKey(key)
 	shardIndex, _ := slices.BinarySearch(s.Tokens, ringPos)
 	if shardIndex == len(s.Tokens) {
 		shardIndex = 0
+	}
+	for i := range s.Shards[shardIndex] {
+		if s.Shards[shardIndex][i].RingPositon == ringPos {
+			s.Shards[shardIndex][i].Value = value
+			return
+		}
 	}
 	s.Shards[shardIndex] = append(s.Shards[shardIndex], StorageItem{
 		RingPositon: ringPos,
@@ -66,8 +75,9 @@ func (s *Storage) Put(key string, value int) {
 	})
 }
 
+// Delete deletes a key from the storage.
 func (s *Storage) Delete(key string) {
-	ringPos := hashKey(key)
+	ringPos := HashKey(key)
 	shardIndex, _ := slices.BinarySearch(s.Tokens, ringPos)
 	if shardIndex == len(s.Tokens) {
 		shardIndex = 0
@@ -78,6 +88,7 @@ func (s *Storage) Delete(key string) {
 	})
 }
 
+// AddShard splits the largest shard by adding a new shard at the midpoint
 func (s *Storage) AddShard() error {
 	maxLen := -1
 	maxLenShard := -1
@@ -105,6 +116,7 @@ func (s *Storage) AddShard() error {
 	return s.addShardAt(ringSpanMiddle)
 }
 
+// addShardAt inserts a shard at a given token position.
 func (s *Storage) addShardAt(token uint32) error {
 	insertIdx, found := slices.BinarySearch(s.Tokens, token)
 	if found {
@@ -157,6 +169,7 @@ func (s *Storage) addShardAt(token uint32) error {
 	return nil
 }
 
+// RemoveShard removes a shard from the storage.
 func (s *Storage) RemoveShard(idx int) error {
 	if idx < 0 || idx >= len(s.Shards) {
 		return fmt.Errorf("RemoveShard: index out of range: %d", idx)
@@ -173,6 +186,7 @@ func (s *Storage) RemoveShard(idx int) error {
 	return nil
 }
 
+// MoveShard moves a shard to a new token position.
 func (s *Storage) MoveShard(idx int, newPosition uint32) error {
 	if idx < 0 || idx >= len(s.Shards) {
 		return fmt.Errorf("MoveShard: index out of range: %d", idx)
@@ -189,4 +203,53 @@ func (s *Storage) MoveShard(idx int, newPosition uint32) error {
 		return err
 	}
 	return s.addShardAt(newPosition)
+}
+
+// Distribution returns a map of shard indices to their item counts.
+func (s *Storage) Distribution() map[int]int {
+	dist := make(map[int]int, len(s.Shards))
+	for i, shard := range s.Shards {
+		dist[i] = len(shard)
+	}
+	return dist
+}
+
+// TotalKeys returns the total number of items stored across all shards.
+func (s *Storage) TotalKeys() int {
+	total := 0
+	for _, shard := range s.Shards {
+		total += len(shard)
+	}
+	return total
+}
+
+// Visualize returns an ASCII histogram representation of key distribution across shards.
+func (s *Storage) Visualize() string {
+	total := s.TotalKeys()
+	var b strings.Builder
+	fmt.Fprintf(&b, "Storage Distribution (%d shards, %d total keys):\n", len(s.Shards), total)
+
+	maxBarWidth := 40
+	maxCount := 0
+	for _, shard := range s.Shards {
+		if len(shard) > maxCount {
+			maxCount = len(shard)
+		}
+	}
+
+	for i, shard := range s.Shards {
+		count := len(shard)
+		pct := 0.0
+		barLen := 0
+		if total > 0 {
+			pct = float64(count) / float64(total) * 100
+		}
+		if maxCount > 0 {
+			barLen = int(float64(count) / float64(maxCount) * float64(maxBarWidth))
+		}
+		bar := strings.Repeat("█", barLen) + strings.Repeat("░", maxBarWidth-barLen)
+		fmt.Fprintf(&b, "  Shard %2d [token: %10d]: [%s] %5d keys (%.1f%%)\n",
+			i, s.Tokens[i], bar, count, pct)
+	}
+	return b.String()
 }
