@@ -10,11 +10,8 @@ import (
 	"github.com/yur4uwe/cloud/8-future/future"
 )
 
-var (
-	errExpected = errors.New("expected test error")
-)
+var errExpected = errors.New("expected test error")
 
-// 1. Successful execution and value retrieval
 func TestFuture_SuccessAndRetrieval(t *testing.T) {
 	ctx := context.Background()
 
@@ -41,7 +38,6 @@ func TestFuture_SuccessAndRetrieval(t *testing.T) {
 	}
 }
 
-// 2. Chaining: Then transformation and Catch recovery
 func TestFuture_ThenAndCatchChaining(t *testing.T) {
 	ctx := context.Background()
 
@@ -63,7 +59,6 @@ func TestFuture_ThenAndCatchChaining(t *testing.T) {
 	}
 }
 
-// 3. Error propagation and Catch recovery
 func TestFuture_ErrorPropagationAndRecovery(t *testing.T) {
 	ctx := context.Background()
 	var thenRan bool
@@ -78,7 +73,6 @@ func TestFuture_ErrorPropagationAndRecovery(t *testing.T) {
 		if !errors.Is(err, errExpected) {
 			return 0, errors.New("unexpected error received in Catch")
 		}
-		// Recover with fallback value
 		return 999, nil
 	}).Then(func(v int) (int, error) {
 		return v + 1, nil
@@ -96,7 +90,6 @@ func TestFuture_ErrorPropagationAndRecovery(t *testing.T) {
 	}
 }
 
-// 4. Uncaught error propagates to Await / Get
 func TestFuture_UncaughtErrorPropagates(t *testing.T) {
 	ctx := context.Background()
 
@@ -112,7 +105,6 @@ func TestFuture_UncaughtErrorPropagates(t *testing.T) {
 	}
 }
 
-// 5. Timeout on Get(timeout)
 func TestFuture_GetTimeout(t *testing.T) {
 	ctx := context.Background()
 
@@ -137,7 +129,6 @@ func TestFuture_GetTimeout(t *testing.T) {
 	}
 }
 
-// 6. Combinator: All() waits for all futures
 func TestFuture_AllSuccess(t *testing.T) {
 	ctx := context.Background()
 
@@ -183,7 +174,6 @@ func TestFuture_AllFailsIfOneFails(t *testing.T) {
 	}
 }
 
-// 7. Combinator: Race() settles with first finished future
 func TestFuture_Race(t *testing.T) {
 	ctx := context.Background()
 
@@ -206,7 +196,6 @@ func TestFuture_Race(t *testing.T) {
 	}
 }
 
-// 8. One-time settlement (fulfilled/rejected once)
 func TestFuture_SettledOnce(t *testing.T) {
 	ctx := context.Background()
 
