@@ -16,6 +16,26 @@ func main() {
 		redisAddr = "redis:6379"
 	}
 
+	http.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
+		conn, err := net.Dial("tcp", redisAddr)
+		if err != nil {
+			http.Error(w, "Redis unreachable", http.StatusServiceUnavailable)
+			return
+		}
+		defer conn.Close()
+
+		fmt.Fprintf(conn, "PING\r\n")
+		reader := bufio.NewReader(conn)
+		resp, err := reader.ReadString('\n')
+		if err != nil || !strings.Contains(resp, "PONG") {
+			http.Error(w, "Redis unhealthy", http.StatusServiceUnavailable)
+			return
+		}
+
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprintln(w, "OK")
+	})
+
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		conn, err := net.Dial("tcp", redisAddr)
 		if err != nil {
