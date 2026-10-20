@@ -48,7 +48,8 @@ func main() {
 
 	for {
 		fmt.Print("shard-cli> ")
-		if !scanner.Scan() {
+		if !scanner.Scan() || scanner.Err() != nil {
+			fmt.Println("Error reading input:", scanner.Err())
 			break
 		}
 
@@ -126,7 +127,7 @@ func main() {
 			}
 
 			fmt.Printf("Populating %d random keys...\n", count)
-			for i := 0; i < count; i++ {
+			for i := range count {
 				k := fmt.Sprintf("auto-key-%d-%d", i, rng.Int63n(1_000_000_000))
 				storage.Put(k, i)
 			}

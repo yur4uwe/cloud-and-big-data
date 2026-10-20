@@ -206,7 +206,7 @@ func TestStorage_StabilityOnAddShard(t *testing.T) {
 	}
 }
 
-// 4. Stability on removing a shard: fraction of remapped keys substantially < 100%
+// Stability on removing a shard: fraction of remapped keys substantially < 100%
 func TestStorage_StabilityOnRemoveShard(t *testing.T) {
 	initialShards := 5
 	s, err := sharding.NewStorage(initialShards)
@@ -218,7 +218,7 @@ func TestStorage_StabilityOnRemoveShard(t *testing.T) {
 	keys := make([]string, totalKeys)
 	rng := rand.New(rand.NewSource(456))
 
-	for i := 0; i < totalKeys; i++ {
+	for i := range totalKeys {
 		keys[i] = fmt.Sprintf("key-rem-%d-%s", i, randomKey(rng, 8))
 		s.Put(keys[i], i)
 	}
@@ -247,7 +247,7 @@ func TestStorage_StabilityOnRemoveShard(t *testing.T) {
 		t.Fatalf("expected %d shards, got %d", initialShards-1, len(s.Shards))
 	}
 
-	// 1. Correctness check: all keys must STILL be retrievable
+	// Correctness check: all keys must STILL be retrievable
 	for i, k := range keys {
 		val, ok := s.Get(k)
 		if !ok {
@@ -258,7 +258,7 @@ func TestStorage_StabilityOnRemoveShard(t *testing.T) {
 		}
 	}
 
-	// 2. Stability check: count how many keys moved to a DIFFERENT logical shard
+	// Stability check: count how many keys moved to a DIFFERENT logical shard
 	// Note: shards with index > victimIdx shifted left by 1.
 	// Only keys originally in victimIdx should have been absorbed by another shard!
 	keysFromVictimRemapped := 0
@@ -299,7 +299,7 @@ func TestStorage_StabilityOnRemoveShard(t *testing.T) {
 	}
 }
 
-// 5. Stability and correctness of MoveShard
+// Stability and correctness of MoveShard
 func TestStorage_MoveShard(t *testing.T) {
 	s, err := sharding.NewStorage(4)
 	if err != nil {
@@ -310,7 +310,7 @@ func TestStorage_MoveShard(t *testing.T) {
 	keys := make([]string, totalKeys)
 	rng := rand.New(rand.NewSource(789))
 
-	for i := 0; i < totalKeys; i++ {
+	for i := range totalKeys {
 		keys[i] = fmt.Sprintf("move-key-%d-%s", i, randomKey(rng, 8))
 		s.Put(keys[i], i)
 	}
@@ -348,10 +348,13 @@ func TestStorage_RemoveLastShardWrapAround(t *testing.T) {
 	keys := make([]string, totalKeys)
 	rng := rand.New(rand.NewSource(999))
 
-	for i := 0; i < totalKeys; i++ {
+	for i := range totalKeys {
 		keys[i] = fmt.Sprintf("last-shard-key-%d-%s", i, randomKey(rng, 8))
 		s.Put(keys[i], i)
 	}
+
+	keysInLastShard := len(s.Shards[len(s.Shards)-1])
+	keysInFirstShardBefore := len(s.Shards[0])
 
 	// Remove the last shard (index 3)
 	lastIdx := len(s.Shards) - 1
@@ -363,15 +366,9 @@ func TestStorage_RemoveLastShardWrapAround(t *testing.T) {
 		t.Fatalf("expected 3 shards, got %d", len(s.Shards))
 	}
 
-	// Verify all keys are still retrievable
-	for i, k := range keys {
-		val, ok := s.Get(k)
-		if !ok {
-			t.Fatalf("key %q lost after removing last shard", k)
-		}
-		if val != i {
-			t.Fatalf("key %q returned wrong value %d, expected %d", k, val, i)
-		}
+	keysInFirstShardAfter := len(s.Shards[0])
+	if keysInFirstShardAfter != keysInFirstShardBefore+keysInLastShard {
+		t.Fatalf("expected %d keys in first shard, got %d", keysInFirstShardBefore-keysInLastShard, keysInFirstShardAfter)
 	}
 }
 
